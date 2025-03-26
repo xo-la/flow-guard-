@@ -1,8 +1,8 @@
 import cv2
 import torch
 import numpy as np
-import os
-from tkinter import Tk, Label, Button, Entry, filedialog, Text, messagebox, Toplevel
+import streamlit as st
+import tempfile
 from fpdf import FPDF
 
 # Load YOLOv5 model
@@ -17,14 +17,6 @@ output_height = 600
 def detect_objects(frame, frame_index):
     """
     Detect objects in the frame and draw bounding boxes.
-
-    Args:
-        frame (ndarray): Input video frame.
-        frame_index (int): Index of the current frame.
-
-    Returns:
-        frame (ndarray): Frame with bounding boxes.
-        detection_summary (dict): Dictionary of detected object counts.
     """
     original_h, original_w = frame.shape[:2]
     resized_frame = cv2.resize(frame, (640, 640), interpolation=cv2.INTER_LINEAR)
@@ -34,7 +26,6 @@ def detect_objects(frame, frame_index):
     detections = results.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2, conf, class_id]
 
     detection_summary = {}
-
     for detection in detections:
         x1, y1, x2, y2, confidence, class_id = detection
         x1 = int(x1 * original_w / 640)
@@ -60,15 +51,20 @@ def detect_objects(frame, frame_index):
 
     return frame
 
-def process_video(video_path):
+
+def process_video(video_file):
+    """
+    Process uploaded video file and detect objects.
+    """
     global fps
-    cap = cv2.VideoCapture(video_path)
+    cap = cv2.VideoCapture(video_file)
     fps = cap.get(cv2.CAP_PROP_FPS)
 
     frame_index = 0
     with open(log_file_name, "w") as log_file:
         log_file.write("Frame, Timestamp, Object, Count\n")
 
+    stframe = st.empty()  # Streamlit video placeholder
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -76,43 +72,18 @@ def process_video(video_path):
 
         output_frame = detect_objects(frame, frame_index)
         display_frame = cv2.resize(output_frame, (output_width, output_height), interpolation=cv2.INTER_LINEAR)
-        cv2.imshow("Detection", display_frame)
+        stframe.image(display_frame, channels="BGR", use_container_width=True)
 
         frame_index += 1
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
     cap.release()
-    cv2.destroyAllWindows()
-    messagebox.showinfo("Processing Complete", "Video processing completed. Detection log saved.")
 
-def capture_realtime():
-    process_video(0)
 
-def upload_video():
-    video_path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4 *.avi *.mkv")])
-    if video_path:
-        process_video(video_path)
-
-def view_log():
-    log_window = Toplevel(root)
-    log_window.title("Detection Log")
-    log_text = Text(log_window, wrap="word", width=80, height=30)
-    log_text.pack(expand=True, fill="both")
-
-    with open(log_file_name, "r") as log_file:
-        log_text.insert("1.0", log_file.read())
-
-def extract_to_pdf():
-    start_time = start_time_entry.get()
-    end_time = end_time_entry.get()
-
-    try:
-        start_seconds = int(start_time.split(":")[0]) * 60 + int(start_time.split(":")[1])
-        end_seconds = int(end_time.split(":")[0]) * 60 + int(end_time.split(":")[1])
-    except ValueError:
-        messagebox.showerror("Invalid Time Format", "Please enter time in MM:SS format.")
-        return
+def extract_to_pdf(start_time, end_time):
+    """
+    Extract specific log entries and save to PDF.
+    """
+    start_seconds = int(start_time.split(":")[0]) * 60 + int(start_time.split(":")[1])
+    end_seconds = int(end_time.split(":")[0]) * 60 + int(end_time.split(":")[1])
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -131,29 +102,37 @@ def extract_to_pdf():
             if start_seconds <= current_seconds <= end_seconds:
                 pdf.cell(0, 10, f"Frame: {frame}, Time: {timestamp}, Object: {obj}, Count: {count}", ln=True)
 
-    pdf_save_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")])
-    if pdf_save_path:
-        pdf.output(pdf_save_path)
-        messagebox.showinfo("PDF Saved", f"PDF saved to {pdf_save_path}")
+    pdf_path = "detection_log.pdf"
+    pdf.output(pdf_path)
+    return pdf_path
 
-# Tkinter GUI
-root = Tk()
-root.title("Flow Guardv1.3")
 
-Label(root, text="Flow Guard", font=("Arial", 16)).pack(pady=10)
+# Streamlit App Layout
+st.title("Flow Guard v1.3")
+st.header("Object Detection with YOLOv5")
 
-Button(root, text="Upload Video", command=upload_video, width=20).pack(pady=5)
-Button(root, text="Capture Real-Time Video", command=capture_realtime, width=20).pack(pady=5)
-Button(root, text="View Full Log", command=view_log, width=20).pack(pady=5)
+# Video upload and processing
+uploaded_file = st.file_uploader("Upload a Video File", type=["mp4", "avi", "mkv"])
+if uploaded_file:
+    st.write("Processing video...")
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    temp_file.write(uploaded_file.read())
+    process_video(temp_file.name)
 
-Label(root, text="Extract Log Section to PDF", font=("Arial", 12)).pack(pady=10)
-Label(root, text="Start Time (MM:SS):").pack()
-start_time_entry = Entry(root)
-start_time_entry.pack()
-Label(root, text="End Time (MM:SS):").pack()
-end_time_entry = Entry(root)
-end_time_entry.pack()
+# Time input for log extraction
+st.subheader("Extract Log Section to PDF")
+start_time = st.text_input("Start Time (MM:SS)", "00:00")
+end_time = st.text_input("End Time (MM:SS)", "00:10")
 
-Button(root, text="Extract to PDF", command=extract_to_pdf, width=20).pack(pady=10)
+if st.button("Extract to PDF"):
+    pdf_file = extract_to_pdf(start_time, end_time)
+    st.success("PDF generated successfully!")
+    st.download_button("Download PDF", open(pdf_file, "rb"), "detection_log.pdf", "application/pdf")
 
-root.mainloop()
+# View log file
+if st.button("View Log File"):
+    if os.path.exists(log_file_name):
+        with open(log_file_name, "r") as log_file:
+            st.text(log_file.read())
+    else:
+        st.warning("Log file not found.")
