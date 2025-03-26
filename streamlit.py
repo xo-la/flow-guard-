@@ -4,6 +4,7 @@ import numpy as np
 import streamlit as st
 import tempfile
 from fpdf import FPDF
+import os as os 
 
 # Load YOLOv5 model
 model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
